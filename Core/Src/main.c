@@ -77,18 +77,25 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+// I2C struct
 I2C_HandleTypeDef hi2c1;
 
+// UART struct
 UART_HandleTypeDef huart2;
 
-//uint8_t regData = 0;
-//uint8_t regAddress = I2C_ID_ADDRESS;
-uint16_t gg;
+// Byte array to receive
+uint8_t reciverBuffer[128];
+// Received bytes counter
+uint8_t bytesRecivedCounter=1;
+// Receive successfull flag
+uint8_t dataReceived=0;
+
 uint8_t temp[2] = {0,0};
 uint8_t temp_char[7] = {0,0,0,0,0,0,0};
 unsigned char LCD_X, LCD_Y;
-unsigned char LCD_Buffer[0x0500] =
-{
+
+// ASCII table
+unsigned char LCD_Buffer[0x0500] = {
 	0x00, 0x00, 0x00, 0x00, 0x00,// 00
 	0x00, 0x00, 0x5F, 0x00, 0x00,// 01
 	0x00, 0x07, 0x00, 0x07, 0x00,// 02
@@ -360,7 +367,7 @@ static void MX_USART2_UART_Init(void);
 static void oledInit(void);
 static void oledWriteCmd(uint8_t);
 static void oledWriteData(uint8_t);
-static void oledPrintChar(unsigned int);
+static void oledPrintChar(char);
 static void oledPrintString(char*);
 static void oledClear(void);
 static void oledSetCursor(uint8_t, uint8_t);
@@ -403,28 +410,31 @@ int main(void)
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_USART2_UART_Init();
+	
   /* USER CODE BEGIN 2 */
 	oledInit();
 	oledClear();
-	oledSetCursor(0, 0);
-	oledPrintString("Hello, World");
+	oledSetCursor(0, 1);
+	
+	HAL_UART_Receive_IT(&huart2, reciverBuffer, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-	
-  while (1)
-  {
-    /* USER CODE END WHILE */
-		//HAL_I2C_Master_Transmit(&hi2c1, (I2C_ADDRESS << 1), &regAddress, 1,  I2C_TIMEOUT);
-		//HAL_I2C_Master_Receive(&hi2c1, (I2C_ADDRESS << 1), &regData, 1,  I2C_TIMEOUT);
+  while (1) {
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-		HAL_Delay(1000);
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-		HAL_Delay(1000);
-    /* USER CODE BEGIN 3 */
+		
+		// If the appointment is over
+		if (dataReceived == 1) {
+			// Turning on the LED
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+			oledClear();
+			oledSetCursor(0, 1);
+			// Printing the received byte array, that is, a string in ASCII encoding
+			oledPrintString((char*)reciverBuffer);
+			dataReceived=0;
+		}
   }
-  /* USER CODE END 3 */
 }
 
 void oledInit() {
@@ -480,18 +490,21 @@ void oledInit() {
 		oledWriteCmd(OLED_DISPLAYON);
 }
 
+// Command write function
 void oledWriteCmd(uint8_t cmd) {
 	temp[0] = COMAND;
 	temp[1] = cmd;
 	HAL_I2C_Master_Transmit(&hi2c1, OLED_adress, temp, 2,100);
 }
 
+// Data write function
 void oledWriteData(uint8_t data) {
 	temp[0] = DATA;
 	temp[1] = data;
 	HAL_I2C_Master_Transmit(&hi2c1, OLED_adress, temp, 2,100);
 }
 
+// Function to set the cursor to a position
 void oledSetCursor(uint8_t x, uint8_t y){
 	LCD_X = x;
 	LCD_Y = y;
@@ -500,6 +513,7 @@ void oledSetCursor(uint8_t x, uint8_t y){
 	oledWriteCmd(0x10 | (x >> 4));
 }
 
+// Display clear function
 void oledClear(void) {
 	unsigned short i;
 	unsigned short x = 0;
@@ -519,7 +533,8 @@ void oledClear(void) {
 	LCD_Y = 0;
 }
 
-void oledPrintChar(unsigned int c) {
+// Function of printing a symbol on the display
+void oledPrintChar(char c) {
 	unsigned char x = 0;
 	temp_char[0] = 0x40;
 	for (x = 0; x < 5; x++) {
@@ -534,11 +549,32 @@ void oledPrintChar(unsigned int c) {
 	}
 }
 
+// Function of printing a string to the display
 void oledPrintString(char *string) {
 	while(*string != '\0') {
 		oledPrintChar(*string);
 		string++;
 	}
+}
+
+// UART callback
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if(huart == &huart2) {
+		// Resetting the end of reception flag
+		dataReceived=0;
+		// If the reciverBuffer is not full and if the end of transmission character is not encountered
+		if (bytesRecivedCounter < 127 && *(reciverBuffer+bytesRecivedCounter-1) != 0x00 ) {
+			// Arming the UART to receive the next byte into the next buffer cell
+			HAL_UART_Receive_IT(&huart2, reciverBuffer+bytesRecivedCounter, 1);
+			bytesRecivedCounter++;
+		} else {
+			// Resetting the byte received counter
+			bytesRecivedCounter=1;
+			// Setting the transmission end flag
+			dataReceived=1;
+			HAL_UART_Receive_IT(&huart2, reciverBuffer, 1);
+		}
+  }
 }
 
 /**
